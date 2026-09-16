@@ -1,0 +1,11 @@
+# Local PocketBase builds
+/pocketbase
+/pocketbase.exe
+/.xpb-build/
+/pocketbuilds.toml
+
+# PocketBase runtime data
+/pb_data/
+
+# macOS metadata
+.DS_Store
