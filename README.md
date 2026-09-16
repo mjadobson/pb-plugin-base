@@ -206,7 +206,7 @@ An installed xpb plugin already executes Go code inside the PocketBase process. 
 
 ## Version injection
 
-The package follows xpb's `var version = "dev"` convention. During `xpb build`, xpb injects each resolved module version into its package with linker flags. The Plugins page therefore displays versions from the modules actually compiled into the PocketBase executable.
+During `xpb build`, xpb injects the resolved module version into the package with linker flags. The Plugins page therefore displays the version from the module actually compiled into the PocketBase executable.
 
 No version or metadata lookup is performed over the network when PocketBase starts or when the Plugins page opens.
 
