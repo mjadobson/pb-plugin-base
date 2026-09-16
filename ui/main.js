@@ -374,16 +374,6 @@ function pluginMetadata(plugin) {
 
   return t.div(
     { className: "xpb-plugin-meta" },
-    t.div(
-      { className: "xpb-plugin-title-row" },
-      t.h4({ textContent: () => displayName(current()) }),
-      () => {
-        const version = current().version;
-        return version
-          ? t.span({ className: "badge", textContent: version })
-          : null;
-      },
-    ),
     () => {
       const description = current().description;
       return description
@@ -630,10 +620,17 @@ function pagePlugins(route) {
           () => {
             const state = pluginPageState(requestedName);
             return state.selected
-              ? t.div({
-                  className: "breadcrumb-item",
-                  textContent: displayName(state.selected),
-                })
+              ? t.div(
+                  { className: "breadcrumb-item" },
+                  displayName(state.selected),
+                  " ",
+                  state.selected.version
+                    ? t.span({
+                        className: "label",
+                        textContent: state.selected.version,
+                      })
+                    : null,
+                )
               : null;
           },
         ),

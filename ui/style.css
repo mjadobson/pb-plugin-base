@@ -2,19 +2,8 @@
   max-width: 960px;
 }
 
-.page-xpb-plugins .xpb-plugin-title-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.page-xpb-plugins .xpb-plugin-title-row h4 {
-  margin: 0;
-}
-
 .page-xpb-plugins .xpb-plugin-meta > .txt-hint {
-  margin-top: 0.5rem;
+  margin-top: 0;
   margin-bottom: 0;
   max-width: 72ch;
 }
