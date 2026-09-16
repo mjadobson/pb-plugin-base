@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const mainSource = fs.readFileSync(path.join(testDir, "../ui/main.js"), "utf8");
 
-function createHarness({ pending = [], sendResult = [] } = {}) {
+function createHarness({ pending = [], sendResult = [], stored = {} } = {}) {
   const consoleErrors = [];
   const apiErrors = [];
   const routes = new Map();
@@ -55,8 +55,17 @@ function createHarness({ pending = [], sendResult = [] } = {}) {
     },
   };
 
+  const storage = new Map(Object.entries(stored));
   const window = {
     xpbPluginsPending: [...pending],
+    localStorage: {
+      getItem(key) {
+        return storage.get(key) ?? null;
+      },
+      setItem(key, value) {
+        storage.set(key, String(value));
+      },
+    },
   };
 
   const app = {
@@ -316,6 +325,33 @@ test("explicit unknown plugin routes do not fall back to another plugin", () => 
   const rootState = testApi.pluginPageState("");
   assert.equal(rootState.selected.name, "known");
   assert.equal(rootState.missing, false);
+});
+
+test("the plugins root restores the last explicitly viewed plugin", () => {
+  const { testApi, window } = createHarness();
+
+  testApi.registry.remote = testApi.parsePluginInfoResponse([
+    { name: "alpha" },
+    { name: "beta" },
+  ]);
+  testApi.registry.loaded = true;
+
+  assert.equal(testApi.pluginPageState("").selected.name, "alpha");
+  assert.equal(testApi.pluginPageState("beta").selected.name, "beta");
+  assert.equal(window.localStorage.getItem("xpbPlugins.lastViewed"), "beta");
+  assert.equal(testApi.pluginPageState("").selected.name, "beta");
+});
+
+test("a stale last-viewed plugin falls back to the first available plugin", () => {
+  const { testApi } = createHarness({
+    stored: { "xpbPlugins.lastViewed": "removed" },
+  });
+
+  testApi.registry.remote = testApi.parsePluginInfoResponse([
+    { name: "available" },
+  ]);
+
+  assert.equal(testApi.pluginPageState("").selected.name, "available");
 });
 
 test("async mounts are aborted on unmount and late cleanup still runs", async () => {

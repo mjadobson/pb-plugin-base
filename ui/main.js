@@ -1,6 +1,7 @@
 const XPB_PLUGINS_API = "/api/xpb/plugin-base";
 const XPB_PLUGINS_ROUTE = "#/plugins";
 const XPB_PLUGINS_EXTENSION = "pb-plugin-base";
+const XPB_LAST_PLUGIN_STORAGE_KEY = "xpbPlugins.lastViewed";
 
 // Load extension-specific styles once.
 if (!document.querySelector("link[data-xpb-plugins-style]")) {
@@ -369,20 +370,26 @@ function pluginSidebar(selectedName) {
 }
 
 function pluginMetadata(plugin) {
+  const current = () => window.xpbPlugins.get(plugin.name) || plugin;
+
   return t.div(
     { className: "xpb-plugin-meta" },
     t.div(
       { className: "xpb-plugin-title-row" },
-      t.h4({ textContent: displayName(plugin) }),
-      () =>
-        plugin.version
-          ? t.span({ className: "badge", textContent: plugin.version })
-          : null,
+      t.h4({ textContent: () => displayName(current()) }),
+      () => {
+        const version = current().version;
+        return version
+          ? t.span({ className: "badge", textContent: version })
+          : null;
+      },
     ),
-    () =>
-      plugin.description
-        ? t.p({ className: "txt-hint" }, ...multilineText(plugin.description))
-        : null,
+    () => {
+      const description = current().description;
+      return description
+        ? t.p({ className: "txt-hint" }, ...multilineText(description))
+        : null;
+    },
   );
 }
 
@@ -548,13 +555,33 @@ function requestedPluginName(route) {
   }
 }
 
+function lastViewedPluginName() {
+  try {
+    return window.localStorage?.getItem(XPB_LAST_PLUGIN_STORAGE_KEY) || "";
+  } catch (_err) {
+    return "";
+  }
+}
+
+function rememberPluginName(name) {
+  try {
+    window.localStorage?.setItem(XPB_LAST_PLUGIN_STORAGE_KEY, name);
+  } catch (_err) {
+    // Storage may be unavailable (for example in a restricted browser context).
+  }
+}
+
 function pluginPageState(requestedName) {
   const available = entries();
 
   if (requestedName === "") {
+    const rememberedName = lastViewedPluginName();
     return {
       available,
-      selected: available[0] || null,
+      selected:
+        available.find((plugin) => plugin.name === rememberedName) ||
+        available[0] ||
+        null,
       missing: false,
     };
   }
@@ -563,6 +590,10 @@ function pluginPageState(requestedName) {
     typeof requestedName === "string"
       ? available.find((plugin) => plugin.name === requestedName) || null
       : null;
+
+  if (selected) {
+    rememberPluginName(selected.name);
+  }
 
   return {
     available,

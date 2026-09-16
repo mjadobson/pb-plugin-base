@@ -20,11 +20,11 @@
 }
 
 .page-xpb-plugins .xpb-plugin-base > hr {
-  margin-top: var(--baseSpacing);
-  margin-bottom: var(--baseSpacing);
+  margin-top: var(--spacing);
+  margin-bottom: var(--spacing);
 }
 
 .xpb-plugins-sidebar .xpb-plugins-sidebar-state {
-  padding: var(--baseSpacing);
+  padding: var(--spacing);
   text-align: center;
 }
