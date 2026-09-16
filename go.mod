@@ -2,6 +2,8 @@ module github.com/mjadobson/pb-plugin-base
 
 go 1.27
 
+toolchain go1.27.1
+
 require (
 	github.com/pocketbase/pocketbase v0.40.4
 	github.com/pocketbuilds/xpb v0.0.5
