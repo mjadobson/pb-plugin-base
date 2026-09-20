@@ -14,6 +14,7 @@ if (!document.querySelector("link[data-xpb-plugins-style]")) {
   );
 }
 
+// Registry and browser registration.
 const registry = store({
   remote: [],
   revision: 0,
@@ -23,12 +24,17 @@ const registry = store({
 });
 
 const localRegistrations = new Map();
+const reportedUnmatchedRegistrations = new Set();
 const pendingRegistrations = Array.isArray(window.xpbPluginsPending)
   ? window.xpbPluginsPending
   : [];
 window.xpbPluginsPending = pendingRegistrations;
 
-function optionalRegistrationString(definition, field, { trim = false } = {}) {
+function normalizedMetadataString(value) {
+  return value.trim();
+}
+
+function optionalRegistrationString(definition, field) {
   const value = definition[field];
   if (value == null) {
     return "";
@@ -38,7 +44,7 @@ function optionalRegistrationString(definition, field, { trim = false } = {}) {
       `xpbPlugins registration ${definition.name || "<unknown>"}: ${field} must be a string`,
     );
   }
-  return trim ? value.trim() : value;
+  return normalizedMetadataString(value);
 }
 
 function normalizeRegistration(definition) {
@@ -65,8 +71,8 @@ function normalizeRegistration(definition) {
 
   return {
     name,
-    author: optionalRegistrationString(definition, "author", { trim: true }),
-    icon: optionalRegistrationString(definition, "icon", { trim: true }),
+    author: optionalRegistrationString(definition, "author"),
+    icon: optionalRegistrationString(definition, "icon"),
     label: optionalRegistrationString(definition, "label"),
     description: optionalRegistrationString(definition, "description"),
     version: optionalRegistrationString(definition, "version"),
@@ -82,12 +88,10 @@ function register(definition) {
     );
   }
 
-  const registration = {
-    definition: normalized,
-    token: Symbol(normalized.name),
-  };
+  const registration = { definition: normalized };
   localRegistrations.set(normalized.name, registration);
   registry.revision++;
+  reportUnmatchedRegistrations();
 
   return () => {
     if (localRegistrations.get(normalized.name) !== registration) {
@@ -96,18 +100,24 @@ function register(definition) {
 
     localRegistrations.delete(normalized.name);
     registry.revision++;
+    reportUnmatchedRegistrations();
     return true;
   };
 }
 
 function unregister(name) {
-  name = String(name || "").trim();
+  if (typeof name !== "string") {
+    return false;
+  }
+
+  name = name.trim();
   if (!name || !localRegistrations.has(name)) {
     return false;
   }
 
   localRegistrations.delete(name);
   registry.revision++;
+  reportUnmatchedRegistrations();
   return true;
 }
 
@@ -156,8 +166,7 @@ function parsePluginInfoResponse(value) {
           `xpb plugin registry entry ${name}: ${field} must be a string`,
         );
       }
-      entry[field] =
-        field === "author" || field === "icon" ? fieldValue.trim() : fieldValue;
+      entry[field] = normalizedMetadataString(fieldValue);
     }
 
     result.push(entry);
@@ -190,7 +199,13 @@ function entries() {
 
   for (const [name, registration] of localRegistrations) {
     const local = registration.definition;
-    const current = byName.get(name) || {
+    const current = byName.get(name);
+
+    if (registry.loaded && !current) {
+      continue;
+    }
+
+    const mergedBase = current || {
       name,
       author: "other",
       icon: "ri-puzzle-2-line",
@@ -201,14 +216,14 @@ function entries() {
     };
 
     byName.set(name, {
-      ...current,
+      ...mergedBase,
       ...local,
       // Empty optional metadata does not erase xpb-provided metadata.
-      author: local.author || current.author,
-      icon: local.icon || current.icon,
-      label: local.label || current.label,
-      description: local.description || current.description,
-      version: local.version || current.version,
+      author: local.author || mergedBase.author,
+      icon: local.icon || mergedBase.icon,
+      label: local.label || mergedBase.label,
+      description: local.description || mergedBase.description,
+      version: local.version || mergedBase.version,
     });
   }
 
@@ -285,6 +300,29 @@ function flushPendingRegistrations() {
 
 flushPendingRegistrations();
 
+function reportUnmatchedRegistrations() {
+  if (!registry.loaded) {
+    return;
+  }
+
+  const remoteNames = new Set(registry.remote.map((entry) => entry.name));
+  for (const name of [...reportedUnmatchedRegistrations]) {
+    if (remoteNames.has(name) || !localRegistrations.has(name)) {
+      reportedUnmatchedRegistrations.delete(name);
+    }
+  }
+
+  for (const name of localRegistrations.keys()) {
+    if (remoteNames.has(name) || reportedUnmatchedRegistrations.has(name)) {
+      continue;
+    }
+    reportedUnmatchedRegistrations.add(name);
+    console.error(
+      `Ignoring xpb plugin UI registration ${name}: no compiled xpb plugin with that machine name is registered`,
+    );
+  }
+}
+
 async function loadPluginInfo() {
   if (registry.loading) {
     return false;
@@ -297,9 +335,9 @@ async function loadPluginInfo() {
     const result = await app.pb.send(XPB_PLUGINS_API, { method: "GET" });
     registry.remote = parsePluginInfoResponse(result);
     registry.loaded = true;
+    reportUnmatchedRegistrations();
     return true;
   } catch (err) {
-    registry.loaded = false;
     registry.error = err;
     if (!err?.isAbort) {
       app.checkApiError?.(err);
@@ -334,21 +372,12 @@ function pluginSidebar(selectedName) {
       }
 
       return groupedEntries().map(([author, plugins]) => {
-        return t.details(
+        return t.div(
           {
             className: "nav-group",
             "html-data-group": author,
-            open: true,
           },
-          t.summary(
-            {
-              tabIndex: -1,
-              onfocusout: () => false,
-              onclick: () => false,
-              onkeyup: () => false,
-            },
-            author,
-          ),
+          t.div({ className: "xpb-plugin-author" }, author),
           () =>
             plugins.map((plugin) => {
               const href = `${XPB_PLUGINS_ROUTE}/${encodeURIComponent(plugin.name)}`;
@@ -383,6 +412,7 @@ function pluginMetadata(plugin) {
   );
 }
 
+// Plugin mount lifecycle.
 function pluginMountError(container) {
   container.replaceChildren(
     t.div(
@@ -529,20 +559,13 @@ function pluginMount(plugin) {
   });
 }
 
+// Page state, rendering, and routing.
 function requestedPluginName(route) {
   const routeValue = route?.params?.plugin;
   if (routeValue == null || routeValue === "") {
     return "";
   }
-  if (typeof routeValue !== "string") {
-    return null;
-  }
-
-  try {
-    return decodeURIComponent(routeValue) || null;
-  } catch (_err) {
-    return null;
-  }
+  return typeof routeValue === "string" ? routeValue : null;
 }
 
 function lastViewedPluginName() {
@@ -590,6 +613,28 @@ function pluginPageState(requestedName) {
     selected,
     missing: registry.loaded && !registry.loading && !selected,
   };
+}
+
+function pluginRegistryFailure({ blocking = false } = {}) {
+  return t.div(
+    { className: blocking ? "block" : "alert warning xpb-plugin-registry-warning" },
+    blocking ? t.h4(null, "Plugin registry failed to load") : null,
+    t.p(
+      { className: blocking ? "txt-hint" : "" },
+      "The compiled plugin registry is unavailable or stale. Available plugin UI remains usable; retry to reload metadata.",
+    ),
+    t.button(
+      {
+        className: "btn",
+        type: "button",
+        disabled: () => registry.loading,
+        onclick: () => {
+          void loadPluginInfo();
+        },
+      },
+      "Retry",
+    ),
+  );
 }
 
 function pagePlugins(route) {
@@ -645,64 +690,58 @@ function pagePlugins(route) {
 
         const state = pluginPageState(requestedName);
 
-        if (registry.error) {
-          return t.div(
-            { className: "block" },
-            t.h4(null, "Plugin registry failed to load"),
-            t.p(
-              { className: "txt-hint" },
-              "The plugin registry response was unavailable or invalid.",
-            ),
-            t.button(
-              {
-                className: "btn",
-                type: "button",
-                disabled: () => registry.loading,
-                onclick: () => {
-                  void loadPluginInfo();
-                },
-              },
-              "Retry",
-            ),
-          );
+        if (registry.error && !state.available.length) {
+          return pluginRegistryFailure({ blocking: true });
         }
 
         if (state.missing) {
           return t.div(
-            { className: "block" },
-            t.h4(null, "Plugin not found"),
-            t.p({
-              className: "txt-hint",
-              textContent:
-                typeof requestedName === "string"
-                  ? `No registered plugin matches "${requestedName}".`
-                  : "The requested plugin name is invalid.",
-            }),
+            null,
+            registry.error ? pluginRegistryFailure() : null,
+            t.div(
+              { className: "block" },
+              t.h4(null, "Plugin not found"),
+              t.p({
+                className: "txt-hint",
+                textContent:
+                  typeof requestedName === "string"
+                    ? `No registered plugin matches "${requestedName}".`
+                    : "The requested plugin name is invalid.",
+              }),
+            ),
           );
         }
 
         if (!state.selected) {
           return t.div(
-            { className: "block" },
-            t.h4(null, "No plugins registered"),
-            t.p(
-              { className: "txt-hint" },
-              "No xpb plugins are currently registered.",
+            null,
+            registry.error ? pluginRegistryFailure() : null,
+            t.div(
+              { className: "block" },
+              t.h4(null, "No plugin selected"),
+              t.p(
+                { className: "txt-hint" },
+                "Choose an available plugin from the sidebar.",
+              ),
             ),
           );
         }
 
         return t.div(
-          { rid: state.selected.name, className: "block xpb-plugin-panel" },
-          pluginMetadata(state.selected),
-          () =>
-            state.selected.mount
-              ? t.div(
-                  { className: "xpb-plugin-base" },
-                  t.hr(),
-                  pluginMount(state.selected),
-                )
-              : null,
+          { rid: state.selected.name },
+          registry.error ? pluginRegistryFailure() : null,
+          t.div(
+            { className: "block xpb-plugin-panel" },
+            pluginMetadata(state.selected),
+            () =>
+              state.selected.mount
+                ? t.div(
+                    { className: "xpb-plugin-base" },
+                    t.hr(),
+                    pluginMount(state.selected),
+                  )
+                : null,
+          ),
         );
       }),
       t.footer({ className: "page-footer" }, app.components.credits()),
@@ -710,6 +749,7 @@ function pagePlugins(route) {
   );
 }
 
+// Bootstrap.
 app.store.headerLinks.push({
   href: XPB_PLUGINS_ROUTE,
   icon: "ri-puzzle-2-line",

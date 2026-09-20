@@ -17,3 +17,18 @@
   padding: var(--spacing);
   text-align: center;
 }
+
+.xpb-plugins-sidebar .nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.xpb-plugins-sidebar .xpb-plugin-author {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  font-size: var(--smFontSize);
+  font-weight: bold;
+  color: var(--surfaceTxtHintColor);
+}
