@@ -3,14 +3,14 @@ package pluginbase
 import (
 	"io/fs"
 	"net/http"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/pocketbuilds/xpb"
 )
-
-const testSuperuserToken = "eyJhbGciOiJIUzI1NiJ9.eyJpZCI6InN5d2JoZWNuaDQ2cmhtMCIsInR5cGUiOiJhdXRoIiwiY29sbGVjdGlvbklkIjoicGJjXzMxNDI2MzU4MjMiLCJleHAiOjI1MjQ2MDQ0NjEsInJlZnJlc2hhYmxlIjp0cnVlfQ.UXgO3j-0BumcugrFjbd7j0M4MQvbrLggLlcu_YNGjoY"
 
 func TestPluginMetadata(t *testing.T) {
 	p := &plugin{}
@@ -27,7 +27,11 @@ func TestPluginMetadata(t *testing.T) {
 	if p.Author() != "mjadobson" {
 		t.Fatalf("unexpected author: %q", p.Author())
 	}
-	if icon := pluginIconName(p, p.Name()); icon != "ri-puzzle-2-line" {
+	icon, err := pluginIconName(p, "plugin", p.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if icon != "ri-puzzle-2-line" {
 		t.Fatalf("unexpected icon: %q", icon)
 	}
 	if p.Description() == "" {
@@ -120,13 +124,6 @@ func (p *minimalTestPlugin) Name() string        { return p.name }
 func (p *minimalTestPlugin) Version() string     { return "v1.0.0" }
 func (p *minimalTestPlugin) Description() string { return "test plugin" }
 
-type panickingMetadataPlugin struct{}
-
-func (p *panickingMetadataPlugin) Init(core.App) error { return nil }
-func (p *panickingMetadataPlugin) Name() string        { return "broken" }
-func (p *panickingMetadataPlugin) Version() string     { return "v1.0.0" }
-func (p *panickingMetadataPlugin) Description() string { panic("boom") }
-
 type configurableMetadataPlugin struct {
 	name        string
 	panicMethod string
@@ -161,51 +158,72 @@ func (p *configurableMetadataPlugin) Description() string {
 	if p.panicMethod == "Description" {
 		panic("description panic")
 	}
-	return "description"
+	return "  line one\nline two  "
 }
 func (p *configurableMetadataPlugin) Version() string {
 	if p.panicMethod == "Version" {
 		panic("version panic")
 	}
-	return "v1.0.0"
+	return " v1.0.0 "
 }
 
 func TestPluginMetadataFallbacks(t *testing.T) {
 	p := &minimalTestPlugin{name: "jsvm"}
 
-	if got := pluginAuthorName(p); got != "mjadobson" {
-		t.Fatalf("unexpected author fallback: %q", got)
+	author, err := pluginAuthorName(p, "plugin")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := pluginIconName(p, p.Name()); got != "ri-javascript-line" {
-		t.Fatalf("unexpected icon fallback: %q", got)
+	if author != "mjadobson" {
+		t.Fatalf("unexpected author fallback: %q", author)
 	}
-	if got := pluginLabelName(p); got != "" {
-		t.Fatalf("unexpected label fallback: %q", got)
+
+	icon, err := pluginIconName(p, "plugin", p.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if icon != "ri-javascript-line" {
+		t.Fatalf("unexpected icon fallback: %q", icon)
+	}
+
+	label, err := pluginLabelName(p, "plugin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if label != "" {
+		t.Fatalf("unexpected label fallback: %q", label)
 	}
 }
 
-func TestPluginInfoForRecoversMetadataPanic(t *testing.T) {
-	info, err := pluginInfoFor(&panickingMetadataPlugin{})
-	if err == nil {
-		t.Fatal("expected metadata panic to be converted to an error")
+func TestPluginInfoForRejectsInvalidNames(t *testing.T) {
+	if info, err := pluginInfoFor(nil); err == nil || info != (pluginInfo{}) {
+		t.Fatalf("expected nil plugin to fail with zero metadata, got %#v, %v", info, err)
 	}
-	if info != (pluginInfo{}) {
-		t.Fatalf("expected zero metadata after panic, got %#v", info)
+
+	if info, err := pluginInfoFor(&minimalTestPlugin{name: " \t"}); err == nil || info != (pluginInfo{}) {
+		t.Fatalf("expected empty name to fail with zero metadata, got %#v, %v", info, err)
+	}
+
+	info, err := pluginInfoFor(&configurableMetadataPlugin{name: "test", panicMethod: "Name"})
+	if err == nil || info != (pluginInfo{}) {
+		t.Fatalf("expected Name panic to fail with zero metadata, got %#v, %v", info, err)
+	}
+	if !strings.Contains(err.Error(), "Name") {
+		t.Fatalf("Name panic error does not identify the accessor: %v", err)
 	}
 }
 
-func TestPluginInfoForRejectsNilAndEmptyNames(t *testing.T) {
-	if _, err := pluginInfoFor(nil); err == nil {
-		t.Fatal("expected nil plugin to return an error")
+func TestPluginInfoForIsolatesOptionalMetadataPanics(t *testing.T) {
+	base := pluginInfo{
+		Name:        "test",
+		Author:      "author",
+		Icon:        "ri-test-line",
+		Label:       "Test",
+		Description: "line one\nline two",
+		Version:     "v1.0.0",
 	}
 
-	if _, err := pluginInfoFor(&minimalTestPlugin{name: " \t"}); err == nil {
-		t.Fatal("expected empty plugin name to return an error")
-	}
-}
-
-func TestPluginInfoForIsolatesAllMetadataPanics(t *testing.T) {
-	for _, method := range []string{"Name", "Author", "Icon", "Label", "Description", "Version"} {
+	for _, method := range []string{"Author", "Icon", "Label", "Description", "Version"} {
 		t.Run(method, func(t *testing.T) {
 			info, err := pluginInfoFor(&configurableMetadataPlugin{
 				name:        "test",
@@ -214,24 +232,46 @@ func TestPluginInfoForIsolatesAllMetadataPanics(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected %s panic to return an error", method)
 			}
-			if info != (pluginInfo{}) {
-				t.Fatalf("expected zero metadata after %s panic, got %#v", method, info)
+			if !strings.Contains(err.Error(), method) || !strings.Contains(err.Error(), `"test"`) {
+				t.Fatalf("metadata error does not identify plugin/accessor: %v", err)
+			}
+
+			want := base
+			switch method {
+			case "Author":
+				want.Author = "mjadobson"
+			case "Icon":
+				want.Icon = "ri-puzzle-2-line"
+			case "Label":
+				want.Label = ""
+			case "Description":
+				want.Description = ""
+			case "Version":
+				want.Version = ""
+			}
+			if info != want {
+				t.Fatalf("unexpected metadata after %s panic:\n got %#v\nwant %#v", method, info, want)
 			}
 		})
 	}
 }
 
-func TestPluginInfoForOptionalMetadata(t *testing.T) {
+func TestPluginInfoForNormalizesMetadata(t *testing.T) {
 	info, err := pluginInfoFor(&configurableMetadataPlugin{name: " test "})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if info.Name != "test" || info.Author != "author" || info.Icon != "ri-test-line" || info.Label != "Test" {
-		t.Fatalf("unexpected normalized metadata: %#v", info)
+	want := pluginInfo{
+		Name:        "test",
+		Author:      "author",
+		Icon:        "ri-test-line",
+		Label:       "Test",
+		Description: "line one\nline two",
+		Version:     "v1.0.0",
 	}
-	if info.Description != "description" || info.Version != "v1.0.0" {
-		t.Fatalf("unexpected metadata: %#v", info)
+	if info != want {
+		t.Fatalf("unexpected normalized metadata:\n got %#v\nwant %#v", info, want)
 	}
 }
 
@@ -266,36 +306,140 @@ func assertUIExtensionRegistered(t testing.TB, _ *tests.TestApp, e *core.ServeEv
 }
 
 func TestPluginAPI(t *testing.T) {
-	scenarios := []tests.ApiScenario{
-		{
-			Name:            "requires superuser auth",
-			Method:          http.MethodGet,
-			URL:             pluginsAPIPath,
-			ExpectedStatus:  http.StatusUnauthorized,
-			ExpectedContent: []string{"requires valid record authorization token"},
-			TestAppFactory:  newTestAppWithPlugin,
-			BeforeTestFunc:  assertUIExtensionRegistered,
+	unauthenticated := tests.ApiScenario{
+		Name:            "requires superuser auth",
+		Method:          http.MethodGet,
+		URL:             pluginsAPIPath,
+		ExpectedStatus:  http.StatusUnauthorized,
+		ExpectedContent: []string{"requires valid record authorization token"},
+		TestAppFactory:  newTestAppWithPlugin,
+		BeforeTestFunc:  assertUIExtensionRegistered,
+	}
+	unauthenticated.Test(t)
+
+	authenticated := tests.ApiScenario{
+		Name:           "returns plugin metadata to a superuser",
+		Method:         http.MethodGet,
+		URL:            pluginsAPIPath,
+		Headers:        map[string]string{},
+		ExpectedStatus: http.StatusOK,
+		ExpectedContent: []string{
+			`"name":"` + pluginName + `"`,
+			`"label":"` + pluginLabel + `"`,
+			`"author":"mjadobson"`,
+			`"icon":"ri-puzzle-2-line"`,
 		},
+		TestAppFactory: newTestAppWithPlugin,
+	}
+	authenticated.BeforeTestFunc = func(t testing.TB, app *tests.TestApp, e *core.ServeEvent) {
+		assertUIExtensionRegistered(t, app, e)
+
+		superusers, err := app.FindAllRecords(core.CollectionNameSuperusers)
+		if err != nil {
+			t.Fatalf("failed to list test superusers: %v", err)
+		}
+		if len(superusers) == 0 {
+			t.Fatal("test app has no superuser records")
+		}
+		token, err := superusers[0].NewAuthToken()
+		if err != nil {
+			t.Fatalf("failed to create test superuser auth token: %v", err)
+		}
+		authenticated.Headers["Authorization"] = token
+	}
+	authenticated.Test(t)
+}
+
+func TestExtensionETagsChangeWithAssetContent(t *testing.T) {
+	extensions := []core.UIExtension{
 		{
-			Name:   "returns plugin metadata to a superuser",
-			Method: http.MethodGet,
-			URL:    pluginsAPIPath,
-			Headers: map[string]string{
-				"Authorization": testSuperuserToken,
+			Name: "example",
+			FS: fstest.MapFS{
+				"main.js":   &fstest.MapFile{Data: []byte("console.log('one')")},
+				"style.css": &fstest.MapFile{Data: []byte("body { color: red; }")},
 			},
-			ExpectedStatus: http.StatusOK,
-			ExpectedContent: []string{
-				`"name":"` + pluginName + `"`,
-				`"label":"` + pluginLabel + `"`,
-				`"author":"mjadobson"`,
-				`"icon":"ri-puzzle-2-line"`,
-			},
-			TestAppFactory: newTestAppWithPlugin,
-			BeforeTestFunc: assertUIExtensionRegistered,
 		},
 	}
 
-	for i := range scenarios {
-		scenarios[i].Test(t)
+	first, err := extensionETags(extensions)
+	if err != nil {
+		t.Fatal(err)
 	}
+	for _, path := range []string{
+		extensionsPath,
+		"/_/extensions/example/main.js",
+		"/_/extensions/example/style.css",
+	} {
+		if !strings.HasPrefix(first[path], `W/"`) {
+			t.Fatalf("missing weak ETag for %q: %q", path, first[path])
+		}
+	}
+
+	extensions[0].FS = fstest.MapFS{
+		"main.js":   &fstest.MapFile{Data: []byte("console.log('two')")},
+		"style.css": &fstest.MapFile{Data: []byte("body { color: red; }")},
+	}
+	second, err := extensionETags(extensions)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for path, etag := range first {
+		if second[path] == etag {
+			t.Fatalf("ETag for %q did not change after an extension asset changed", path)
+		}
+	}
+}
+
+func TestRequestETagMatches(t *testing.T) {
+	etag := `W/"abc"`
+	for _, header := range []string{`W/"abc"`, `"abc"`, `"other", W/"abc"`, "*"} {
+		if !requestETagMatches(header, etag) {
+			t.Fatalf("expected %q to match %q", header, etag)
+		}
+	}
+	for _, header := range []string{"", `W/"other"`, `"ab"`} {
+		if requestETagMatches(header, etag) {
+			t.Fatalf("did not expect %q to match %q", header, etag)
+		}
+	}
+}
+
+func TestExtensionBundleCacheHeaders(t *testing.T) {
+	uiFS, err := fs.Sub(embeddedUI, "ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	etags, err := extensionETags([]core.UIExtension{{Name: extensionName, FS: uiFS}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	revalidation := tests.ApiScenario{
+		Name:            "extension bundle is revalidated",
+		Method:          http.MethodGet,
+		URL:             extensionsPath,
+		ExpectedStatus:  http.StatusOK,
+		ExpectedContent: []string{"XPB_PLUGINS_API"},
+		TestAppFactory:  newTestAppWithPlugin,
+		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, response *http.Response) {
+			if got := response.Header.Get("Cache-Control"); got != "no-cache" {
+				t.Fatalf("unexpected Cache-Control: %q", got)
+			}
+			if got := response.Header.Get("ETag"); got != etags[extensionsPath] {
+				t.Fatalf("unexpected ETag: %q", got)
+			}
+		},
+	}
+	revalidation.Test(t)
+
+	notModified := tests.ApiScenario{
+		Name:           "matching extension bundle is not transferred",
+		Method:         http.MethodGet,
+		URL:            extensionsPath,
+		Headers:        map[string]string{"If-None-Match": etags[extensionsPath]},
+		ExpectedStatus: http.StatusNotModified,
+		TestAppFactory: newTestAppWithPlugin,
+	}
+	notModified.Test(t)
 }
