@@ -21,7 +21,7 @@ PocketBase's Superuser UI extension API is experimental. Compatibility follows P
 For a reproducible build, pin the plugin version:
 
 ```sh
-xpb build v0.40.4 --with github.com/mjadobson/pb-plugin-base@v0.1.2
+xpb build v0.40.4 --with github.com/mjadobson/pb-plugin-base@v0.2.0
 ```
 
 For a custom Go application, blank-import it alongside your other xpb plugins so its `init()` registers it:

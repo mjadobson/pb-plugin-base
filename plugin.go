@@ -21,7 +21,7 @@ import (
 	"github.com/pocketbuilds/xpb"
 )
 
-var version = "v0.1.2"
+var version = "v0.2.0"
 
 const (
 	pluginName     = "mjadobson_pb_plugin_base"
