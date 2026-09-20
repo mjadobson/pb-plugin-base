@@ -29,7 +29,7 @@ For a custom Go application, blank-import it alongside your other xpb plugins so
 ```go
 import (
     _ "github.com/mjadobson/pb-plugin-base"
-    _ "github.com/author/plugin-name"
+    _ "github.com/authorname/plugin-name"
 )
 ```
 
@@ -77,10 +77,10 @@ UI extensions do not need to care whether this host's `main.js` executes before 
 
 ```js
 const definition = {
-  name: "slugify", // must match the Go plugin Name()
-  author: "mjadobson", // optional
+  name: "plugin-name", // must match the Go plugin Name()
+  author: "authorname", // optional
   icon: "ri-links-line", // optional Remix Icon class
-  label: "Slugify", // optional display label
+  label: "Plugin Name", // optional display label
 
   async mount(container, { app, t, store, watch, signal, plugin, registry }) {
     const data = await loadSettings({ signal });
@@ -100,6 +100,8 @@ window.xpbPlugins?.flushPending();
 ```
 
 The host drains `window.xpbPluginsPending` when it starts. If the host is already running, `flushPending()` registers anything just queued. Each queued definition is consumed once: invalid entries are logged and discarded so they cannot block or repeatedly poison later flushes. Duplicate browser registrations for the same plugin name are rejected rather than silently replacing one another.
+
+Before the compiled-plugin registry has loaded, browser registrations remain visible so extension load order does not matter. After a successful registry load, the compiled xpb registry is authoritative: a browser registration whose `name` does not exactly match a compiled plugin is excluded from normal selection and an integration error is logged. The registration is retained, so a later successful registry refresh can make it usable if a matching compiled plugin appears.
 
 For dynamic registrations made after the host exists, `register()` returns an idempotent disposer:
 
@@ -196,7 +198,7 @@ GET /api/xpb/plugin-base
 
 The route is protected by PocketBase's `RequireSuperuserAuth()` middleware.
 
-Metadata is collected independently for each compiled plugin. If one third-party plugin panics while returning metadata, that plugin is skipped and the failure is logged instead of taking down the entire registry response.
+Metadata is collected independently for each compiled plugin. A plugin whose mandatory `Name()` accessor fails cannot be identified and is skipped. Failures in `Author()`, `Icon()`, `Label()`, `Description()`, or `Version()` are isolated to that field: the plugin remains listed with the normal fallback value and the failure is logged.
 
 ## Security and trust model
 
@@ -209,6 +211,14 @@ An installed xpb plugin already executes Go code inside the PocketBase process. 
 During `xpb build`, xpb injects the resolved module version into the package with linker flags. The Plugins page therefore displays the version from the module actually compiled into the PocketBase executable.
 
 No version or metadata lookup is performed over the network when PocketBase starts or when the Plugins page opens.
+
+## UI extension caching
+
+PocketBase normally serves production UI-extension assets with a long-lived browser cache. This plugin overrides that behaviour for the combined `/_/extensions.js` bundle and files below `/_/extensions/` by adding content-aware `ETag` validation and `Cache-Control: no-cache`.
+
+The fingerprint includes the PocketBase version, the names and versions of all registered xpb plugins, and the names and contents of all registered UI-extension files. Adding, removing, upgrading, or rebuilding a plugin therefore changes the fingerprint. Browsers reuse the cached response with a lightweight `304 Not Modified` while the compiled extension set is unchanged and retrieve it again after a deployment that changes the fingerprint.
+
+Development mode uses `Cache-Control: no-store` so filesystem-backed extensions can still be previewed without restarting PocketBase.
 
 ## Development
 
@@ -229,7 +239,7 @@ govulncheck ./...
 
 CI runs this validation on every push and pull request. It installs `govulncheck` from `golang.org/x/vuln/cmd/govulncheck@latest` before running the final scan.
 
-The browser tests execute the production `ui/main.js` in a small VM harness and cover queued registration, special-name safety, duplicate registration/disposal, metadata merging and validation, missing routes, async mount cancellation, cleanup isolation, and invalid mount results.
+The browser tests keep a fast VM harness for registration, failure-state, metadata, routing, accessibility semantics, and mount-lifecycle regressions. They also load the Shablon IIFE from the resolved PocketBase `v0.40.4` Go module to prove exact route decoding, reactive registry updates, navigation cleanup, and abort/late-cleanup behaviour against PocketBase's actual frontend dependency rather than a copied router implementation.
 
 ## License
 
